@@ -10,33 +10,50 @@ jobs:
       - name: Install jq
         run: sudo apt-get install -y jq
 
-      - name: Cleanup Ghost Devices
+      - name: Cleanup Ghosts
         env:
           APIKEY: ${{ secrets.TAILSCALE_API_KEY }}
         run: |
-          tailnet="mrfrinso001.github"   # TRY this first
-          api="https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
+          set -e
+          
+          # candidate tailnet identifiers to try
+          candidates=("mrfrinso001.github" "YOUR_EMAIL@gmail.com")
+          api=""
+          body=""
+          
+          for cand in "${candidates[@]}"; do
+            url="https://api.tailscale.com/api/v2/tailnet/$cand/machines"
+            echo "🔎 Trying tailnet=$cand"
+            resp=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $APIKEY" "$url")
+            body=$(echo "$resp" | head -n -1)
+            status=$(echo "$resp" | tail -n1)
+            if [ "$status" = "200" ]; then
+              echo "✅ Found correct tailnet: $cand"
+              api="$url"
+              break
+            fi
+          done
+          
+          if [ -z "$api" ]; then
+            echo "❌ None of the tailnet candidates worked"
+            exit 1
+          fi
+          
+          echo "📋 Current devices:"
+          echo "$body" | jq '.machines[] | {hostname,id,lastSeen}'
 
-          echo "📡 Fetching devices..."
-          resp=$(curl -s -H "Authorization: Bearer $APIKEY" "$api")
-
-          echo "$resp" | jq .
-
-          # Get IDs
-          ids=$(echo "$resp" | jq -r '.machines[]? | select(.hostname | startswith("rdp-ci-node")) | .id')
-
+          ids=$(echo "$body" | jq -r '.machines[] | select(.hostname | startswith("rdp-ci-node")) | .id')
           if [ -z "$ids" ]; then
-            echo "✅ No rdp-ci-node ghosts."
+            echo "✅ No ghosts"
             exit 0
           fi
 
-          # Newest node by lastSeen
-          newest=$(echo "$resp" | jq -r '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
-          echo "👉 Keeping: $newest"
+          newest=$(echo "$body" | jq -r '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
+          echo "👉 Keeping newest: $newest"
 
           for id in $ids; do
             if [ "$id" != "$newest" ]; then
-              echo "🗑 Deleting ghost $id"
+              echo "🗑 Deleting ghost: $id"
               curl -s -H "Authorization: Bearer $APIKEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id" >/dev/null
             fi
           done
