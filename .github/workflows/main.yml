@@ -1,15 +1,46 @@
-name: Debug Tailnet API
+name: Tailscale Ghost Cleaner
+
 on:
-  workflow_dispatch:
+  workflow_dispatch:     # manual run
+  schedule:
+    - cron: "0 */12 * * *"   # auto run every 12 hours
 
 jobs:
-  debug:
+  clean:
     runs-on: ubuntu-latest
     steps:
-      - name: Curl API test
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Cleanup Ghost Nodes
         env:
           APIKEY: ${{ secrets.TAILSCALE_API_KEY }}
         run: |
-          echo "👉 Testing API against mrfrinso001.github"
-          curl -v -H "Authorization: Bearer $APIKEY" \
-            https://api.tailscale.com/api/v2/tailnet/mrfrinso001.github/machines
+          set -e
+          tailnet="mrfrinso001@outlook.com"   # 👈 your actual Tailnet identifier
+          api="https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
+
+          echo "📡 Fetching devices for Tailnet $tailnet"
+          resp=$(curl -s -H "Authorization: Bearer $APIKEY" "$api")
+
+          echo "$resp" | jq '.machines[] | {hostname,id,lastSeen}'
+
+          ids=$(echo "$resp" | jq -r '.machines[] | select(.hostname | startswith("rdp-ci-node")) | .id')
+          if [ -z "$ids" ]; then
+            echo "✅ No ghost devices found"
+            exit 0
+          fi
+
+          newest=$(echo "$resp" | jq -r \
+            '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
+
+          echo "👉 Keeping newest node: $newest"
+          for id in $ids; do
+            if [ "$id" != "$newest" ]; then
+              echo "🗑 Deleting ghost: $id"
+              curl -s -H "Authorization: Bearer $APIKEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id"
+            fi
+          done
+
+          echo "📋 Remaining devices:"
+          curl -s -H "Authorization: Bearer $APIKEY" "$api" | jq '.machines[] | {hostname,id,lastSeen}'
