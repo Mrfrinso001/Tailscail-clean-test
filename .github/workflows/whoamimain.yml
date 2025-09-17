@@ -1,0 +1,16 @@
+name: Tailscale Whoami
+
+on:
+  workflow_dispatch:   # lets you trigger manually from the Actions tab
+
+jobs:
+  whoami:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Call Tailscale whoami API
+        env:
+          APIKEY: ${{ secrets.TAILSCALE_API_KEY }}
+        run: |
+          echo "📡 Calling Tailscale /whoami endpoint..."
+          curl -s -H "Authorization: Bearer $APIKEY" https://api.tailscale.com/api/v2/whoami | jq .
