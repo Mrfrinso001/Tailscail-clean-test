@@ -1,9 +1,7 @@
 name: Tailscale Ghost Cleaner
 
 on:
-  workflow_dispatch:     # manual run
-  schedule:
-    - cron: "0 */12 * * *"   # auto run every 12 hours
+  workflow_dispatch:
 
 jobs:
   clean:
@@ -12,35 +10,37 @@ jobs:
       - name: Install jq
         run: sudo apt-get install -y jq
 
-      - name: Cleanup Ghost Nodes
+      - name: Cleanup Ghost Devices
         env:
           APIKEY: ${{ secrets.TAILSCALE_API_KEY }}
         run: |
           set -e
-          tailnet="mrfrinso001@outlook.com"   # 👈 your actual Tailnet identifier
+
+          # 👇 URL-encoded tailnet name (replace @ with %40)
+          tailnet="mrfrinso001%40outlook.com"
           api="https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
 
           echo "📡 Fetching devices for Tailnet $tailnet"
           resp=$(curl -s -H "Authorization: Bearer $APIKEY" "$api")
 
-          echo "$resp" | jq '.machines[] | {hostname,id,lastSeen}'
+          echo "$resp" | jq '.machines[]? | {hostname,id,lastSeen}'
 
-          ids=$(echo "$resp" | jq -r '.machines[] | select(.hostname | startswith("rdp-ci-node")) | .id')
+          ids=$(echo "$resp" | jq -r '.machines[]? | select(.hostname | startswith("rdp-ci-node")) | .id')
+
           if [ -z "$ids" ]; then
-            echo "✅ No ghost devices found"
+            echo "✅ No rdp-ci-node ghosts found."
             exit 0
           fi
 
-          newest=$(echo "$resp" | jq -r \
-            '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
-
+          newest=$(echo "$resp" | jq -r '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
           echo "👉 Keeping newest node: $newest"
+
           for id in $ids; do
             if [ "$id" != "$newest" ]; then
               echo "🗑 Deleting ghost: $id"
-              curl -s -H "Authorization: Bearer $APIKEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id"
+              curl -s -H "Authorization: Bearer $APIKEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id" >/dev/null
             fi
           done
 
           echo "📋 Remaining devices:"
-          curl -s -H "Authorization: Bearer $APIKEY" "$api" | jq '.machines[] | {hostname,id,lastSeen}'
+          curl -s -H "Authorization: Bearer $APIKEY" "$api" | jq '.machines[]? | {hostname,id,lastSeen}'
