@@ -15,16 +15,18 @@ jobs:
           APIKEY: ${{ secrets.TAILSCALE_API_KEY }}
         run: |
           set -e
-          tailnet="mrfrinso001%40outlook.com"
-          api="https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
+          api="https://api.tailscale.com/api/v2/tailnet/-/machines"
 
-          echo "📡 Fetching devices for Tailnet $tailnet"
+          echo "📡 Fetching devices for tailnet (auto-detected by key)..."
           resp=$(curl -s -H "Authorization: Bearer $APIKEY" "$api")
 
-          echo "📋 Devices found:"
-          echo "$resp" | jq '.machines[] | {id,name,lastSeen}'
+          echo "Raw response:"
+          echo "$resp"
 
-          ids=$(echo "$resp" | jq -r '.machines[] | select(.name | startswith("rdp-ci-node")) | .id')
+          # Make sure we parse only if machines exist
+          echo "$resp" | jq '.machines[]? | {id,name,lastSeen}'
+
+          ids=$(echo "$resp" | jq -r '.machines[]? | select(.name | startswith("rdp-ci-node")) | .id')
 
           if [ -z "$ids" ]; then
             echo "✅ No rdp-ci-node ghosts found."
@@ -39,9 +41,9 @@ jobs:
               echo "🗑 Deleting ghost: $id"
               curl -s -H "Authorization: Bearer $APIKEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id"
             else
-              echo "👍 Keeping current node: $id"
+              echo "👍 Keeping current active node: $id"
             fi
           done
 
           echo "📋 Remaining after cleanup:"
-          curl -s -H "Authorization: Bearer $APIKEY" "$api" | jq '.machines[] | {id,name,lastSeen}'
+          curl -s -H "Authorization: Bearer $APIKEY" "$api" | jq '.machines[]? | {id,name,lastSeen}'
