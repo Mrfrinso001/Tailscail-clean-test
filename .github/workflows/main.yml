@@ -1,9 +1,9 @@
 name: Tailscale Ghost Cleaner
 
 on:
-  workflow_dispatch:    # run manually from Actions tab
+  workflow_dispatch:    # allow manual run from GitHub Actions tab
   schedule:
-    - cron: "0 */12 * * *"   # run every 12 hours (optional)
+    - cron: "0 */12 * * *"   # auto run every 12 hours, adjust as needed
 
 jobs:
   ghost-clean:
@@ -18,27 +18,26 @@ jobs:
         run: |
           set -e
 
-          tailnet="taila2a6d7.ts.net"
+          tailnet="mrfrinso001.github"
           api="https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
 
-          echo "📡 Fetching machines..."
+          echo "📡 Fetching machines for tailnet: $tailnet ..."
           resp=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $TAILSCALE_API_KEY" "$api")
 
-          # split body and status
+          # Split JSON body & HTTP status
           body=$(echo "$resp" | head -n -1)
           status=$(echo "$resp" | tail -n1)
 
-          if [ "$status" = "403" ]; then
-            echo "❌ ERROR: API key is read-only or lacks permission (HTTP 403). Generate a new API key WITHOUT 'read-only'."
-            exit 1
-          elif [ "$status" != "200" ]; then
-            echo "❌ ERROR: API call failed with HTTP $status"
+          if [ "$status" != "200" ]; then
+            echo "❌ ERROR: API call failed (HTTP $status)"
             echo "$body"
             exit 1
           fi
 
-          echo "$body" | jq .
+          echo "📋 Current machines:"
+          echo "$body" | jq '.machines[] | {hostname,id,lastSeen}'
 
+          # Collect only rdp-ci-node*
           ids=$(echo "$body" | jq -r '.machines[] | select(.hostname | startswith("rdp-ci-node")) | .id')
 
           if [ -z "$ids" ]; then
@@ -46,12 +45,13 @@ jobs:
             exit 0
           fi
 
+          # Determine newest by lastSeen timestamp
           newest=$(echo "$body" | jq -r '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
 
           for id in $ids; do
             if [ "$id" != "$newest" ]; then
-              echo "🗑 Deleting ghost machine: $id"
-              curl -s -H "Authorization: Bearer $TAILSCALE_API_KEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id"
+              echo "🗑 Deleting ghost device: $id"
+              curl -s -H "Authorization: Bearer $TAILSCALE_API_KEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id" >/dev/null
             else
               echo "👍 Keeping current device: $id"
             fi
