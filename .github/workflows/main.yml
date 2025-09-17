@@ -1,0 +1,54 @@
+name: Tailscale Ghost Cleaner
+
+on:
+  workflow_dispatch:    # allow manual run
+  schedule:
+    - cron: '0 */12 * * *'   # run every 12 hours (adjust if needed)
+
+jobs:
+  ghost-clean:
+    runs-on: ubuntu-latest   # Linux runner is fine (only API calls, no Windows needed)
+
+    steps:
+      - name: Cleanup old Tailscale ghosts
+        shell: pwsh
+        env:
+          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+        run: |
+          $tailnet     = "taila2a6d7.ts.net"
+          $machinesUrl = "https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
+
+          Write-Host "📡 Fetching machine list for tailnet: $tailnet"
+          $resp = curl -s -u "$env:TAILSCALE_API_KEY:`"" $machinesUrl
+          if (-not $resp) { Write-Host "❌ No response from Tailscale API"; exit 0 }
+
+          $machines = ($resp.Content | ConvertFrom-Json).machines
+          if (-not $machines) { Write-Host "✅ No machines found in tailnet"; exit 0 }
+
+          # Show what is found
+          $machines | ForEach-Object { Write-Host "Found: $($_.hostname) id=$($_.id) lastSeen=$($_.lastSeen)" }
+
+          $targets = $machines | Where-Object { $_.hostname -like "rdp-ci-node*" }
+
+          if (-not $targets) {
+            Write-Host "✅ No rdp-ci-node machines found."
+            exit 0
+          }
+
+          # Sort by lastSeen to find currently alive node
+          $latest = $targets | Sort-Object lastSeen -Descending | Select-Object -First 1
+          Write-Host "Keeping newest node: $($latest.hostname) id=$($latest.id)"
+
+          $ghosts = $targets | Where-Object { $_.id -ne $latest.id }
+
+          if (-not $ghosts) {
+            Write-Host "✅ No ghosts to delete."
+          } else {
+            foreach ($g in $ghosts) {
+              $deviceId = [string]$g.id
+              Write-Host "🗑 Deleting ghost: $($g.hostname) id=$deviceId lastSeen=$($g.lastSeen)"
+              $deleteUrl = "https://api.tailscale.com/api/v2/device/$deviceId"
+              $delResp = curl -s -X DELETE -u "$env:TAILSCALE_API_KEY:`"" $deleteUrl
+              Write-Host "API Response: $delResp"
+            }
+          }
