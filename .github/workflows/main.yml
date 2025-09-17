@@ -7,7 +7,7 @@ on:
 
 jobs:
   ghost-clean:
-    runs-on: ubuntu-latest   # Linux runner is fine (only API calls, no Windows needed)
+    runs-on: ubuntu-latest   # Linux runner is fine
 
     steps:
       - name: Cleanup old Tailscale ghosts
@@ -19,14 +19,20 @@ jobs:
           $machinesUrl = "https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
 
           Write-Host "📡 Fetching machine list for tailnet: $tailnet"
-          $resp = curl -s -u "$env:TAILSCALE_API_KEY:`"" $machinesUrl
+
+          # Proper: capture raw JSON string
+          $resp = curl -s -u "$env:TAILSCALE_API_KEY:`"" $machinesUrl | Out-String
+
           if (-not $resp) { Write-Host "❌ No response from Tailscale API"; exit 0 }
 
-          $machines = ($resp.Content | ConvertFrom-Json).machines
-          if (-not $machines) { Write-Host "✅ No machines found in tailnet"; exit 0 }
+          try {
+            $machines = ($resp | ConvertFrom-Json).machines
+          } catch {
+            Write-Host "❌ Failed to parse JSON: $resp"
+            exit 1
+          }
 
-          # Show what is found
-          $machines | ForEach-Object { Write-Host "Found: $($_.hostname) id=$($_.id) lastSeen=$($_.lastSeen)" }
+          if (-not $machines) { Write-Host "✅ No machines found in tailnet."; exit 0 }
 
           $targets = $machines | Where-Object { $_.hostname -like "rdp-ci-node*" }
 
@@ -35,7 +41,7 @@ jobs:
             exit 0
           }
 
-          # Sort by lastSeen to find currently alive node
+          # Sort by lastSeen, keep only newest
           $latest = $targets | Sort-Object lastSeen -Descending | Select-Object -First 1
           Write-Host "Keeping newest node: $($latest.hostname) id=$($latest.id)"
 
@@ -46,9 +52,15 @@ jobs:
           } else {
             foreach ($g in $ghosts) {
               $deviceId = [string]$g.id
-              Write-Host "🗑 Deleting ghost: $($g.hostname) id=$deviceId lastSeen=$($g.lastSeen)"
+              if (-not $deviceId) { $deviceId = [string]$g.stableId }
+              Write-Host "🗑 Deleting ghost: $($g.hostname) id=$deviceId"
               $deleteUrl = "https://api.tailscale.com/api/v2/device/$deviceId"
-              $delResp = curl -s -X DELETE -u "$env:TAILSCALE_API_KEY:`"" $deleteUrl
+              $delResp = curl -s -X DELETE -u "$env:TAILSCALE_API_KEY:`"" $deleteUrl | Out-String
               Write-Host "API Response: $delResp"
             }
           }
+
+          # Print updated list again
+          $resp2 = curl -s -u "$env:TAILSCALE_API_KEY:`"" $machinesUrl | Out-String
+          Write-Host "📋 Machines after cleanup:"
+          $resp2
