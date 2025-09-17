@@ -1,39 +1,61 @@
 name: Tailscale Ghost Cleaner
+
 on:
-  workflow_dispatch:
+  workflow_dispatch:    # run manually from Actions tab
+  schedule:
+    - cron: "0 */12 * * *"   # run every 12 hours (optional)
 
 jobs:
   ghost-clean:
     runs-on: ubuntu-latest
     steps:
-      - name: Clean ghosts
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Cleanup Ghost Devices
+        env:
+          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
         run: |
+          set -e
+
           tailnet="taila2a6d7.ts.net"
-          machines_url="https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
+          api="https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
 
           echo "📡 Fetching machines..."
-          resp=$(curl -s -H "Authorization: Bearer $TAILSCALE_API_KEY" "$machines_url")
+          resp=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $TAILSCALE_API_KEY" "$api")
 
-          echo "$resp" | jq '.machines[] | {hostname, id, lastSeen}'
+          # split body and status
+          body=$(echo "$resp" | head -n -1)
+          status=$(echo "$resp" | tail -n1)
 
-          ids=$(echo "$resp" | jq -r '.machines[] | select(.hostname | startswith("rdp-ci-node")) | .id')
-
-          if [ -z "$ids" ]; then
-            echo "✅ No rdp-ci-node machines found."; exit 0
+          if [ "$status" = "403" ]; then
+            echo "❌ ERROR: API key is read-only or lacks permission (HTTP 403). Generate a new API key WITHOUT 'read-only'."
+            exit 1
+          elif [ "$status" != "200" ]; then
+            echo "❌ ERROR: API call failed with HTTP $status"
+            echo "$body"
+            exit 1
           fi
 
-          newest=$(echo "$resp" | jq -r '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
+          echo "$body" | jq .
+
+          ids=$(echo "$body" | jq -r '.machines[] | select(.hostname | startswith("rdp-ci-node")) | .id')
+
+          if [ -z "$ids" ]; then
+            echo "✅ No rdp-ci-node machines found."
+            exit 0
+          fi
+
+          newest=$(echo "$body" | jq -r '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
 
           for id in $ids; do
             if [ "$id" != "$newest" ]; then
-              echo "🗑 Deleting ghost $id"
+              echo "🗑 Deleting ghost machine: $id"
               curl -s -H "Authorization: Bearer $TAILSCALE_API_KEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id"
             else
-              echo "Keeping newest $id"
+              echo "👍 Keeping current device: $id"
             fi
           done
 
-          echo "📋 Remaining devices:"
-          curl -s -H "Authorization: Bearer $TAILSCALE_API_KEY" "$machines_url" | jq '.machines[] | {hostname, id, lastSeen}'
-        env:
-          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+          echo "📋 Machines after cleanup:"
+          curl -s -H "Authorization: Bearer $TAILSCALE_API_KEY" "$api" | jq '.machines[] | {hostname,id,lastSeen}'
