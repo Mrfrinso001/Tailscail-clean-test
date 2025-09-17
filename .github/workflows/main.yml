@@ -17,7 +17,7 @@ jobs:
           set -e
           
           # candidate tailnet identifiers to try
-          candidates=("mrfrinso001.github" "YOUR_EMAIL@gmail.com")
+          candidates=("mrfrinso001.github" "mrfrinso001@outlook.com")
           api=""
           body=""
           
