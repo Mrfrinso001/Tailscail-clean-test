@@ -1,9 +1,9 @@
 name: Tailscale Ghost Cleaner
 
 on:
-  workflow_dispatch:    # run manually
+  workflow_dispatch:    # allow manual run from GitHub Actions tab
   schedule:
-    - cron: "0 */12 * * *"   # auto run every 12 hours (adjust as needed)
+    - cron: "0 */12 * * *"   # auto run every 12 hours, adjust as needed
 
 jobs:
   ghost-clean:
@@ -24,6 +24,7 @@ jobs:
           echo "📡 Fetching machines for tailnet: $tailnet ..."
           resp=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $TAILSCALE_API_KEY" "$api")
 
+          # Split JSON body & HTTP status
           body=$(echo "$resp" | head -n -1)
           status=$(echo "$resp" | tail -n1)
 
@@ -36,6 +37,7 @@ jobs:
           echo "📋 Current machines:"
           echo "$body" | jq '.machines[] | {hostname,id,lastSeen}'
 
+          # Collect only rdp-ci-node*
           ids=$(echo "$body" | jq -r '.machines[] | select(.hostname | startswith("rdp-ci-node")) | .id')
 
           if [ -z "$ids" ]; then
@@ -43,6 +45,7 @@ jobs:
             exit 0
           fi
 
+          # Determine newest by lastSeen timestamp
           newest=$(echo "$body" | jq -r '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
 
           for id in $ids; do
