@@ -15,32 +15,33 @@ jobs:
           APIKEY: ${{ secrets.TAILSCALE_API_KEY }}
         run: |
           set -e
-
-          # 👇 URL-encoded tailnet name (replace @ with %40)
           tailnet="mrfrinso001%40outlook.com"
           api="https://api.tailscale.com/api/v2/tailnet/$tailnet/machines"
 
           echo "📡 Fetching devices for Tailnet $tailnet"
           resp=$(curl -s -H "Authorization: Bearer $APIKEY" "$api")
 
-          echo "$resp" | jq '.machines[]? | {hostname,id,lastSeen}'
+          echo "📋 Devices found:"
+          echo "$resp" | jq '.machines[] | {id,name,lastSeen}'
 
-          ids=$(echo "$resp" | jq -r '.machines[]? | select(.hostname | startswith("rdp-ci-node")) | .id')
+          ids=$(echo "$resp" | jq -r '.machines[] | select(.name | startswith("rdp-ci-node")) | .id')
 
           if [ -z "$ids" ]; then
             echo "✅ No rdp-ci-node ghosts found."
             exit 0
           fi
 
-          newest=$(echo "$resp" | jq -r '.machines | map(select(.hostname | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
-          echo "👉 Keeping newest node: $newest"
+          newest=$(echo "$resp" | jq -r '.machines | map(select(.name | startswith("rdp-ci-node"))) | max_by(.lastSeen).id')
+          echo "👉 Keeping newest: $newest"
 
           for id in $ids; do
             if [ "$id" != "$newest" ]; then
               echo "🗑 Deleting ghost: $id"
-              curl -s -H "Authorization: Bearer $APIKEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id" >/dev/null
+              curl -s -H "Authorization: Bearer $APIKEY" -X DELETE "https://api.tailscale.com/api/v2/device/$id"
+            else
+              echo "👍 Keeping current node: $id"
             fi
           done
 
-          echo "📋 Remaining devices:"
-          curl -s -H "Authorization: Bearer $APIKEY" "$api" | jq '.machines[]? | {hostname,id,lastSeen}'
+          echo "📋 Remaining after cleanup:"
+          curl -s -H "Authorization: Bearer $APIKEY" "$api" | jq '.machines[] | {id,name,lastSeen}'
